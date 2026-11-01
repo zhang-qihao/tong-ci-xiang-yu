@@ -11,6 +11,65 @@ LOCK_HELD=0
 OLD_HEAD=''
 BACKUP_DIR="$RUN_DIR/update-backup-$$"
 HAD_DIST=0
+LOCAL_BACKUP_DIR=''
+
+check_local_changes() {
+  local path blocked=0
+  while IFS= read -r -d '' path; do
+    case "$path" in
+      package-lock.json) ;;
+      *) printf 'update.sh: 未提交的源码改动: %s\n' "$path" >&2; blocked=1 ;;
+    esac
+  done < <(git diff --name-only -z HEAD --; git diff --cached --name-only -z --)
+  while IFS= read -r -d '' path; do
+    case "$path" in
+      .env|.env.*|.claude/launch.json) ;;
+      *) printf 'update.sh: 未跟踪的文件: %s\n' "$path" >&2; blocked=1 ;;
+    esac
+  done < <(git ls-files --others --exclude-standard -z)
+  (( blocked == 0 )) || die "请先处理以上源码改动；package-lock.json 和本地部署配置不受此限制"
+}
+
+check_local_collisions() {
+  local target="$1" path parent
+  while IFS= read -r -d '' path; do
+    parent="$path"
+    while [[ "$parent" != '.' ]]; do
+      if [[ -e "$parent" || -L "$parent" ]]; then
+        if ! git ls-files --error-unmatch -- "$parent" >/dev/null 2>&1; then
+          if [[ ! -d "$parent" || "$parent" == "$path" || -L "$parent" ]]; then
+            die "远端文件 $path 会覆盖本地文件 $parent，已拒绝更新"
+          fi
+        fi
+      fi
+      [[ "$parent" == */* ]] || break
+      parent="${parent%/*}"
+    done
+  done < <(git ls-tree -r --name-only -z "$target")
+}
+
+backup_local_lockfile() {
+  if git diff --quiet HEAD -- package-lock.json && git diff --cached --quiet -- package-lock.json; then return; fi
+  mkdir -p "$RUN_DIR/local-backups"
+  LOCAL_BACKUP_DIR="$(mktemp -d "$RUN_DIR/local-backups/$(date '+%Y%m%d-%H%M%S')-XXXXXX")"
+  git diff --binary HEAD -- package-lock.json > "$LOCAL_BACKUP_DIR/working.patch"
+  git diff --cached --binary -- package-lock.json > "$LOCAL_BACKUP_DIR/staged.patch"
+  if [[ -e package-lock.json || -L package-lock.json ]]; then
+    cp -P package-lock.json "$LOCAL_BACKUP_DIR/package-lock.json"
+  fi
+  log "本地锁文件改动已备份到 $LOCAL_BACKUP_DIR；本次使用远端锁文件安装依赖"
+}
+
+restore_local_lockfile() {
+  [[ -n "$LOCAL_BACKUP_DIR" ]] || return 0
+  if [[ -s "$LOCAL_BACKUP_DIR/working.patch" ]]; then
+    git apply "$LOCAL_BACKUP_DIR/working.patch" || return 1
+  fi
+  if [[ -s "$LOCAL_BACKUP_DIR/staged.patch" ]]; then
+    git apply --cached "$LOCAL_BACKUP_DIR/staged.patch" || return 1
+  fi
+  log "已恢复更新前的本地锁文件改动；备份继续保留"
+}
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
@@ -68,7 +127,8 @@ restore_old_version() {
     return 0
   fi
   log "恢复旧版本 $OLD_HEAD"
-  git reset --hard "$OLD_HEAD" >/dev/null || true
+  git reset --hard "$OLD_HEAD" >/dev/null || return 1
+  restore_local_lockfile || return 1
   if (( HAD_DIST == 1 )); then
     rm -rf "$ROOT/dist"
     cp -R "$BACKUP_DIR/dist" "$ROOT/dist"
@@ -93,15 +153,8 @@ main() {
   acquire_lock
   ensure_repo
 
-  local dirty
-  dirty="$(git status --porcelain --untracked-files=all)"
-  [[ -z "$dirty" ]] || die "工作树有未提交改动，请先提交或清理后再更新"
-
-  if OLD_HEAD="$(git rev-parse --verify HEAD 2>/dev/null)"; then
-    :
-  else
-    OLD_HEAD=''
-  fi
+  OLD_HEAD="$(git rev-parse --verify HEAD 2>/dev/null)" || die "请先从远端克隆项目后再运行更新脚本"
+  check_local_changes
 
   log "从 origin/$BRANCH 获取更新"
   git fetch origin "$BRANCH"
@@ -110,6 +163,9 @@ main() {
   if [[ -n "$OLD_HEAD" ]] && ! git merge-base --is-ancestor "$OLD_HEAD" "$target"; then
     die "远程 master 不是本地版本的快进更新，请手动处理 Git 历史"
   fi
+
+  check_local_collisions "$target"
+  backup_local_lockfile
 
   mkdir -p "$BACKUP_DIR"
   if [[ -d "$ROOT/dist" ]]; then
@@ -152,4 +208,6 @@ main() {
   log "更新完成，服务运行在 PORT $PORT"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
