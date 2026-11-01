@@ -57,10 +57,20 @@ pid_is_ours() {
   local pid="${1:-}"
   [[ "$pid" =~ ^[0-9]+$ ]] || return 1
   kill -0 "$pid" 2>/dev/null || return 1
-  local command_line
+  local command_line field process_dev='' process_inode='' root_identity
   command_line="$(ps -p "$pid" -o command= 2>/dev/null || true)"
-  [[ "$command_line" == *"$ROOT/server.mjs"* ]] || return 1
+  [[ "$command_line" == *server.mjs* ]] || return 1
   [[ "$command_line" == *node* ]] || return 1
+  root_identity="$(stat -f '%d:%i' "$ROOT")"
+  while IFS= read -r field; do
+    case "$field" in
+      D*) process_dev="${field#D}" ;;
+      i*) process_inode="${field#i}" ;;
+    esac
+  done < <(lsof -a -p "$pid" -d cwd -F Dni 2>/dev/null || true)
+  [[ -n "$process_dev" && -n "$process_inode" ]] || return 1
+  process_dev=$((process_dev))
+  [[ "$process_dev:$process_inode" == "$root_identity" ]]
 }
 
 read_pid() {
@@ -73,6 +83,17 @@ read_pid() {
 
 port_listeners() {
   lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null || true
+}
+
+our_listener_pid() {
+  local listener
+  for listener in $(port_listeners); do
+    if pid_is_ours "$listener"; then
+      printf '%s\n' "$listener"
+      return 0
+    fi
+  done
+  return 1
 }
 
 ensure_port_available() {
@@ -100,6 +121,12 @@ start_app() {
 
   local existing_pid=''
   if existing_pid="$(read_pid 2>/dev/null || true)"; then
+    :
+  else
+    existing_pid="$(our_listener_pid 2>/dev/null || true)"
+    [[ -n "$existing_pid" ]] && printf '%s\n' "$existing_pid" > "$PID_FILE"
+  fi
+  if [[ -n "$existing_pid" ]]; then
     if pid_is_ours "$existing_pid"; then
       if health_check; then
         log "服务已在运行 (PID $existing_pid, PORT $PORT)"
@@ -144,14 +171,19 @@ stop_app() {
   validate_port
   local pid=''
   if ! pid="$(read_pid 2>/dev/null || true)"; then
-    local listeners
-    listeners="$(port_listeners)"
-    if [[ -n "$listeners" ]]; then
-      printf 'app.sh: 没有本项目 PID 文件，但端口 %s 仍被占用\n' "$PORT" >&2
-      return 1
+    pid="$(our_listener_pid 2>/dev/null || true)"
+    if [[ -n "$pid" ]]; then
+      printf '%s\n' "$pid" > "$PID_FILE"
+    else
+      local listeners
+      listeners="$(port_listeners)"
+      if [[ -n "$listeners" ]]; then
+        printf 'app.sh: 没有本项目 PID 文件，但端口 %s 仍被其他进程占用\n' "$PORT" >&2
+        return 1
+      fi
+      log "服务未运行"
+      return 0
     fi
-    log "服务未运行"
-    return 0
   fi
 
   if ! pid_is_ours "$pid"; then

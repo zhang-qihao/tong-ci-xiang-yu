@@ -4,7 +4,7 @@ set -Eeuo pipefail
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 RUN_DIR="$ROOT/.run"
 LOCK_DIR="$RUN_DIR/app.lock"
-REMOTE_URL="git@github.com:zhang-qihao/tong-ci-xiang-yu.git"
+REMOTE_URL="https://github.com/zhang-qihao/tong-ci-xiang-yu.git"
 BRANCH="master"
 PORT="${PORT:-3001}"
 LOCK_HELD=0
@@ -118,7 +118,7 @@ main() {
   fi
 
   log "切换到远程版本 $target"
-  git reset --hard "$target"
+  git reset --hard "$target" >/dev/null
   if ! build_target; then
     log "依赖安装或构建失败，保留当前运行服务并恢复代码"
     restore_old_version
