@@ -50,10 +50,6 @@ function getPlayerName() {
   return storageGet('tong-ci-player-name') || ''
 }
 
-function normalizeWord(value = '') {
-  return value.trim().replace(/[\s，。！？、,.!?]/g, '').toLowerCase()
-}
-
 function App() {
   const socketRef = useRef(null)
   const noticeTimerRef = useRef(null)
@@ -72,6 +68,7 @@ function App() {
   const [newRoomMode, setNewRoomMode] = useState('system_words')
   const [newRoomCategory, setNewRoomCategory] = useState('all')
   const [selectedTime, setSelectedTime] = useState(60)
+  const [maxRounds, setMaxRounds] = useState(10)
   const [answer, setAnswer] = useState('')
   const [submitted, setSubmitted] = useState(false)
   const [timeLeft, setTimeLeft] = useState(0)
@@ -258,7 +255,7 @@ function App() {
 
   function createRoom() {
     if (!requireName() || !requireConnection()) return
-    send({ type: 'create_room', name: newRoomName, mode: newRoomMode, category: newRoomCategory, time: selectedTime })
+    send({ type: 'create_room', name: newRoomName, mode: newRoomMode, category: newRoomCategory, time: selectedTime, maxRounds: Number(maxRounds) })
   }
 
   function joinByCode() {
@@ -312,7 +309,7 @@ function App() {
       {screen === 'game' && activeRoom && <Game room={activeRoom} playerId={playerId} answer={answer} setAnswer={setAnswer} submitted={submitted} timeLeft={timeLeft} totalTime={totalTime} onSubmit={submitAnswer} onBack={leaveRoom} />}
       {screen === 'result' && activeRoom && <Result initialWords={activeRoom.initialWords} rounds={rounds} type={resultType} roomCode={activeRoom.id} time={activeRoom.time} isHost={isHost} restarting={restarting} onAgain={playAgain} onHome={leaveRoom} />}
       {showNameSetup && <NameSetupModal connected={connected} initialName={playerName} onSave={updateName} />}
-      {showCreate && <CreateModal connected={connected} name={newRoomName} setName={setNewRoomName} mode={newRoomMode} setMode={setNewRoomMode} category={newRoomCategory} setCategory={setNewRoomCategory} time={selectedTime} setTime={setSelectedTime} onClose={() => setShowCreate(false)} onCreate={createRoom} />}
+      {showCreate && <CreateModal connected={connected} name={newRoomName} setName={setNewRoomName} mode={newRoomMode} setMode={setNewRoomMode} category={newRoomCategory} setCategory={setNewRoomCategory} maxRounds={maxRounds} setMaxRounds={setMaxRounds} time={selectedTime} setTime={setSelectedTime} onClose={() => setShowCreate(false)} onCreate={createRoom} />}
       {showJoin && <JoinModal code={roomCode} setCode={setRoomCode} onClose={() => setShowJoin(false)} onJoin={joinByCode} />}
     </main>
   )
@@ -352,7 +349,7 @@ function Room({ room, playerId, isHost, selectedTime, setSelectedTime, onBack, o
     <section className="room-intro"><span className="section-label">你正在进入</span><h1>{room.name}</h1><p>{hasOpponent ? `${players[0]?.name || '玩家'} 和 ${players[1]?.name || '玩家'} 已经到齐。` : '等另一个人进来，然后一起开始。'}</p></section>
     <section className="room-panel"><div className="room-panel-top"><div className="room-badge"><span className="pulse-dot" />公开房间</div><button className="copy-button" onClick={onCopy}>{copied ? <Check size={15} /> : <Copy size={15} />} {copied ? '已复制' : '复制房间号'}</button></div><div className="room-code-large">{room.id.split('').map((char, index) => <span key={`${char}-${index}`}>{char}</span>)}</div><div className="room-players"><div className="player-with-name"><div className="player avatar-purple">你</div><small>{players.find((player) => player.id === playerId)?.name || '你'}</small></div><div className="connection-line"><span /><span /><span /></div><div className="player-with-name"><div className={`player ${hasOpponent ? 'avatar-mint' : 'avatar-mint waiting-avatar'}`}>{hasOpponent ? '✓' : '?'}</div><small>{players.find((player) => player.id !== playerId)?.name || '等待中'}</small></div></div><p className="waiting-copy">{hasOpponent ? '另一位玩家已经加入' : '房间里还有一个位置'}<br /><small>{hasOpponent ? '准备好后就可以开始这一局。' : '把房间号发给朋友，或者等一个刚好路过的人。'}</small></p></section>
     <section className="settings-panel"><div className="setting-title"><Clock3 size={17} /><div><strong>每轮思考时间</strong><small>{isHost ? '房主可以调整，开始后不能更改' : '由房主设置'}</small></div></div><div className="mode-note"><span>{playerWordsMode ? '双方出词' : '系统出词'}</span><small>{playerWordsMode ? '第一组词由你们各自填写' : `${CATEGORY_OPTIONS.find((option) => option.id === room.category)?.label || '综合'}题库`}</small></div><div className="time-options">{[30, 60, 90, 120].map((seconds) => <button key={seconds} disabled={!isHost || room.status !== 'waiting'} className={selectedTime === seconds ? 'selected' : ''} onClick={() => setSelectedTime(seconds)}>{seconds}<small>秒</small></button>)}</div></section>
-    <div className="bottom-action"><button className="primary-button full-button" disabled={!isHost || !hasOpponent || room.status !== 'waiting'} onClick={onStart}>{hasOpponent ? '开始一局' : '等待另一位玩家'} <ArrowUpRight size={18} /></button><span className="micro-copy"><Flame size={13} /> {isHost ? '你是房主' : `房主：${players.find((player) => player.id !== playerId)?.name || '等待中'}`}</span></div>
+    <div className="bottom-action"><button className="primary-button full-button" disabled={!isHost || !hasOpponent || room.status !== 'waiting'} onClick={onStart}>{hasOpponent ? '开始一局' : '等待另一位玩家'} <ArrowUpRight size={18} /></button><span className="micro-copy"><Flame size={13} /> {isHost ? '你是房主' : `房主：${players.find((player) => player.id !== playerId)?.name || '等待中'}`} · 最多 {room.maxRounds} 轮</span></div>
   </div>
 }
 
@@ -364,7 +361,7 @@ function Opening({ room, answer, setAnswer, submitted, timeLeft, totalTime, onSu
 function Game({ room, answer, setAnswer, submitted, timeLeft, totalTime, onSubmit, onBack }) {
   const progress = Math.max(0, Math.min(100, (timeLeft / totalTime) * 100))
   const words = room.currentWords || ['', '']
-  return <div className="page game-page"><Header eyebrow={`第 ${room.round} 轮`} onBack={onBack} action={<span className={`timer ${timeLeft <= 10 ? 'urgent' : ''}`}><Clock3 size={15} /> {timeLeft}s</span>} /><div className="timer-track"><span style={{ width: `${progress}%` }} /></div><section className="game-content"><div className="game-note">你们现在看到的是同一组词</div><div className="prompt-pair"><div className="prompt-card purple"><span>词一</span><strong>{words[0]}</strong></div><div className="prompt-symbol">×</div><div className="prompt-card mint"><span>词二</span><strong>{words[1]}</strong></div></div><p className="game-question">看到这两个词，你想到什么？</p><form className="answer-form" onSubmit={onSubmit}><input disabled={submitted} value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder={submitted ? '已经写下你的答案' : '写下一个词'} maxLength={12} /><div className="input-footer"><span>{answer.length}/12</span><button className="primary-button submit-button" disabled={!answer.trim() || submitted}>{submitted ? '等对方…' : '提交答案'} {!submitted && <ArrowUpRight size={17} />}</button></div></form><div className="privacy-note"><span className="lock-shape" /> 对方现在看不到你的答案</div></section><div className="game-bottom"><span>不着急，认真想一想</span><span>最长 {totalTime} 秒</span></div></div>
+  return <div className="page game-page"><Header eyebrow={`第 ${room.round} / ${room.maxRounds} 轮`} onBack={onBack} action={<span className={`timer ${timeLeft <= 10 ? 'urgent' : ''}`}><Clock3 size={15} /> {timeLeft}s</span>} /><div className="timer-track"><span style={{ width: `${progress}%` }} /></div><section className="game-content"><div className="game-note">你们现在看到的是同一组词</div><div className="prompt-pair"><div className="prompt-card purple"><span>词一</span><strong>{words[0]}</strong></div><div className="prompt-symbol">×</div><div className="prompt-card mint"><span>词二</span><strong>{words[1]}</strong></div></div><p className="game-question">看到这两个词，你想到什么？</p><form className="answer-form" onSubmit={onSubmit}><input disabled={submitted} value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder={submitted ? '已经写下你的答案' : '写下一个词'} maxLength={12} /><div className="input-footer"><span>{answer.length}/12</span><button className="primary-button submit-button" disabled={!answer.trim() || submitted}>{submitted ? '等对方…' : '提交答案'} {!submitted && <ArrowUpRight size={17} />}</button></div></form><div className="privacy-note"><span className="lock-shape" /> 对方现在看不到你的答案</div></section><div className="game-bottom"><span>不着急，认真想一想</span><span>最长 {totalTime} 秒</span></div></div>
 }
 
 function Result({ initialWords, rounds, type, roomCode, time, isHost, restarting, onAgain, onHome }) {
@@ -372,12 +369,12 @@ function Result({ initialWords, rounds, type, roomCode, time, isHost, restarting
   const capped = type === 'max_rounds'
   const timeline = [
     ...(initialWords?.length === 2 ? [{ round: 1, answers: initialWords, matched: false, initial: true }] : []),
-    ...rounds.map((entry) => ({ ...entry, round: (entry.round || 0) + 1 })),
+    ...rounds.map((entry) => ({ ...entry, round: entry.round || 1 })),
   ]
   const resultLabel = matched ? 'MATCH FOUND' : capped ? 'KEEP CLOSING' : 'TIME OUT'
   const resultTitle = matched ? <>你们的脑回路<br /><em>相遇了</em></> : capped ? <>你们还在<br /><em>慢慢靠近</em></> : <>这次还没有<br /><em>相遇</em></>
   const resultHint = matched ? '最后一轮相遇' : capped ? '已到达本局上限' : '下次再试试'
-  return <div className="page result-page"><Header eyebrow="一局结束" action={<button className="icon-button" onClick={onHome} aria-label="关闭"><X size={19} /></button>} /><section className="result-heading"><div className={`result-symbol ${matched ? 'matched' : ''}`}>{matched ? '✦' : '·'}</div><span className="section-label">{resultLabel}</span><h1>{resultTitle}</h1><p>房间 {roomCode} <i>·</i> 共 {timeline.length} 轮 <i>·</i> 每轮 {time} 秒</p></section><section className="trajectory"><div className="trajectory-label"><span>联想轨迹</span><span>{resultHint}</span></div>{timeline.map((entry, index) => { const answers = entry.answers || []; const left = answers[0] || '超时未作答'; const right = answers[1] || '超时未作答'; const isMatch = entry.matched || (!entry.initial && normalizeWord(left) === normalizeWord(right)); return <div className={`trajectory-row ${isMatch ? 'match-row' : ''} ${entry.initial ? 'initial-row' : ''}`} key={`${entry.round || index}-${left}`}><span className="round-label">第 {entry.round || index + 1} 轮{entry.initial ? ' · 起始词' : ''}</span><div className="word-pair"><span className="result-word left">{left}</span><span className="pair-mark">{isMatch ? '=' : '×'}</span><span className="result-word right">{right}</span></div></div> })}</section><div className="result-actions">{isHost && <button className="primary-button full-button" disabled={restarting} onClick={onAgain}>{restarting ? '正在准备…' : '再来一局'} {!restarting && <ArrowUpRight size={18} />}</button>}<button className="secondary-button full-button" onClick={onHome}>回到公开房间</button></div><p className="result-footer">每一次不一样，都是下一次靠近的线索。</p></div>
+  return <div className="page result-page"><Header eyebrow="一局结束" action={<button className="icon-button" onClick={onHome} aria-label="关闭"><X size={19} /></button>} /><section className="result-heading"><div className={`result-symbol ${matched ? 'matched' : ''}`}>{matched ? '✦' : '·'}</div><span className="section-label">{resultLabel}</span><h1>{resultTitle}</h1><p>房间 {roomCode} <i>·</i> 共 {timeline.length} 轮 <i>·</i> 每轮 {time} 秒</p></section><section className="trajectory"><div className="trajectory-label"><span>联想轨迹</span><span>{resultHint}</span></div><div className="trajectory-list" tabIndex={0} aria-label="本局轮次记录">{timeline.map((entry, index) => { const answers = entry.answers || []; const left = answers[0] || '超时未作答'; const right = answers[1] || '超时未作答'; const isMatch = entry.matched === true; return <div className={`trajectory-row ${isMatch ? 'match-row' : ''} ${entry.initial ? 'initial-row' : ''}`} key={`${entry.round || index}-${left}`}><span className="round-label">第 {entry.round || index + 1} 轮{entry.initial ? ' · 起始词' : ''}</span><div className="word-pair"><span className="result-word left">{left}</span><span className="pair-mark">{isMatch ? '=' : '×'}</span><span className="result-word right">{right}</span></div></div> })}</div></section><div className="result-actions">{isHost && <button className="primary-button full-button" disabled={restarting} onClick={onAgain}>{restarting ? '正在准备…' : '再来一局'} {!restarting && <ArrowUpRight size={18} />}</button>}<button className="secondary-button full-button" onClick={onHome}>回到公开房间</button></div><p className="result-footer">每一次不一样，都是下一次靠近的线索。</p></div>
 }
 
 function NameSetupModal({ connected, initialName, onSave }) {
@@ -399,7 +396,7 @@ function NameSetupModal({ connected, initialName, onSave }) {
   )
 }
 
-function CreateModal({ connected, name, setName, mode, setMode, category, setCategory, time, setTime, onClose, onCreate }) {
+function CreateModal({ connected, name, setName, mode, setMode, category, setCategory, maxRounds, setMaxRounds, time, setTime, onClose, onCreate }) {
   return (
     <div className="modal-backdrop" onClick={(event) => { if (event.target === event.currentTarget) onClose() }}>
       <form className="modal-card create-modal" role="dialog" aria-modal="true" aria-labelledby="create-title" onSubmit={(event) => { event.preventDefault(); onCreate() }}>
@@ -411,6 +408,7 @@ function CreateModal({ connected, name, setName, mode, setMode, category, setCat
         </div></fieldset>
         {mode === 'system_words' ? <fieldset className="choice-field"><legend>选择题库</legend><div className="category-options">{CATEGORY_OPTIONS.map((option) => <button type="button" key={option.id} aria-pressed={category === option.id} className={category === option.id ? 'selected' : ''} onClick={() => setCategory(option.id)}><span>{option.label}</span>{category === option.id && <Check size={14} />}</button>)}</div><p className="form-hint">{CATEGORY_OPTIONS.find((option) => option.id === category)?.description}</p></fieldset> : <p className="form-hint">双方出词模式由玩家提供起始词，不使用系统题库。</p>}
         <fieldset className="choice-field"><legend>每轮思考时间</legend><div className="modal-time-options">{TIME_OPTIONS.map((seconds) => <button type="button" key={seconds} aria-pressed={time === seconds} className={time === seconds ? 'selected' : ''} onClick={() => setTime(seconds)}>{seconds} 秒</button>)}</div></fieldset>
+        <label className="field-label">单局轮数上限<input className="text-input" type="number" inputMode="numeric" min="2" max="30" step="1" required value={maxRounds} onChange={(event) => setMaxRounds(event.target.value)} /><span className="form-hint">默认 10 轮，最多 30 轮，包含第 1 轮起始词。</span></label>
         <button type="submit" className="primary-button full-button" disabled={!connected}>{connected ? '创建房间' : '正在连接…'} <ArrowUpRight size={18} /></button>
       </form>
     </div>

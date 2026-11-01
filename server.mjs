@@ -12,7 +12,8 @@ const isProduction = process.env.NODE_ENV === 'production'
 const port = Number(process.env.PORT || 3001)
 const rooms = new Map()
 const clients = new Map()
-const MAX_ROUNDS = 6
+const DEFAULT_ROUNDS = 10
+const MAX_ROUNDS = 30
 
 const mimeTypes = {
   '.html': 'text/html; charset=utf-8',
@@ -53,6 +54,7 @@ function roomSummary(room) {
     players: room.players.size,
     max: 2,
     time: room.time,
+    maxRounds: room.maxRounds,
     category: room.category,
     status: room.status,
   }
@@ -63,7 +65,6 @@ function publicRoom(room) {
     ...roomSummary(room),
     playersDetail: [...room.players.values()].map((player) => ({ id: player.id, name: player.name, isHost: player.id === room.hostId })),
     round: room.round,
-    maxRounds: MAX_ROUNDS,
     mode: room.mode,
     initialWords: room.initialWords,
     currentWords: room.currentWords,
@@ -119,7 +120,7 @@ function startRound(room, words) {
   clearRoomTimer(room)
   const firstRound = room.round === 0
   room.status = 'playing'
-  room.round += 1
+  room.round = firstRound ? 2 : room.round + 1
   room.currentWords = [...words]
   if (firstRound) room.initialWords = [...words]
   room.answers = new Map()
@@ -157,7 +158,7 @@ function revealRound(room) {
   broadcastRoom(room, { type: 'round_revealed', entry, room: publicRoom(room) })
   if (matched) {
     finishRoom(room, 'matched')
-  } else if (room.round >= MAX_ROUNDS) {
+  } else if (room.round >= room.maxRounds) {
     finishRoom(room, 'max_rounds')
   } else {
     setTimeout(() => {
@@ -245,7 +246,12 @@ function handleMessage(client, payload) {
     }
     case 'create_room': {
       if (currentRoom) return sendError(client, '你已经在一个房间里了')
+      const maxRounds = payload.maxRounds ?? DEFAULT_ROUNDS
+      if (!Number.isInteger(maxRounds) || maxRounds < 2 || maxRounds > MAX_ROUNDS) {
+        return sendError(client, '单局轮数必须是 2 到 30 的整数（含起始轮）')
+      }
       const room = {
+        maxRounds,
         id: randomCode(), name: String(payload.name || '无名相遇').trim().slice(0, 18) || '无名相遇',
         hostId: player.id, hostName: player.name,
         mode: payload.mode === 'player_words' ? 'player_words' : 'system_words',
