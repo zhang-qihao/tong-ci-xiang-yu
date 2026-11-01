@@ -63,6 +63,9 @@ function App() {
   const [query, setQuery] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [showJoin, setShowJoin] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+  const [settingsSaving, setSettingsSaving] = useState(false)
+  const settingsPendingRef = useRef(null)
   const [roomCode, setRoomCode] = useState('')
   const [newRoomName, setNewRoomName] = useState('两个人的脑回路')
   const [newRoomMode, setNewRoomMode] = useState('system_words')
@@ -101,6 +104,8 @@ function App() {
       socket.onclose = () => {
         setConnected(false)
         setRestarting(false)
+        setSettingsSaving(false)
+        settingsPendingRef.current = null
         if (!disposed) retryTimer = window.setTimeout(connect, 1200)
       }
       socket.onerror = () => socket.close()
@@ -116,6 +121,11 @@ function App() {
           if (message.type === 'connected') setConnected(true)
           if (message.type === 'room_joined' || message.type === 'room_updated') {
             setActiveRoom(message.room)
+            if (settingsPendingRef.current && Object.entries(settingsPendingRef.current).every(([key, value]) => message.room[key] === value)) {
+              settingsPendingRef.current = null
+              setSettingsSaving(false)
+              setShowSettings(false)
+            }
             if (message.type === 'room_updated' && message.room.status === 'waiting') setScreen((current) => current === 'result' ? 'room' : current)
             if (message.type === 'room_joined') {
               setSelectedTime(message.room.time)
@@ -163,6 +173,8 @@ function App() {
           }
           if (message.type === 'error') {
             setRestarting(false)
+            setSettingsSaving(false)
+            settingsPendingRef.current = null
             setNotice(message.message)
             window.clearTimeout(noticeTimerRef.current)
             noticeTimerRef.current = window.setTimeout(() => setNotice(''), 2600)
@@ -271,6 +283,27 @@ function App() {
     setScreen('lobby')
   }
 
+  function editSettings() {
+    if (!isHost || activeRoom.status !== 'waiting') return
+    setNewRoomMode(activeRoom.mode)
+    setNewRoomCategory(activeRoom.category)
+    setSelectedTime(activeRoom.time)
+    setMaxRounds(activeRoom.maxRounds)
+    setShowSettings(true)
+  }
+
+  function saveSettings() {
+    if (!requireConnection() || settingsSaving) return
+    const settings = { mode: newRoomMode, category: newRoomCategory, time: selectedTime, maxRounds: Number(maxRounds) }
+    settingsPendingRef.current = settings
+    setSettingsSaving(true)
+    if (!send({ type: 'update_settings', ...settings })) {
+      settingsPendingRef.current = null
+      setSettingsSaving(false)
+      setNotice('连接已断开，请重试')
+    }
+  }
+
   function startGame() {
     if (!requireConnection()) return
     send({ type: 'start_game' })
@@ -304,12 +337,13 @@ function App() {
       <div className="ambient ambient-two" />
       {notice && <div className="toast" role="status">{notice}</div>}
       {screen === 'lobby' && <Lobby connected={connected} playerName={playerName} onNameChange={updateName} query={query} setQuery={setQuery} rooms={filteredRooms} onOpen={openRoom} onCreate={() => setShowCreate(true)} onJoin={() => setShowJoin(true)} />}
-      {screen === 'room' && activeRoom && <Room room={activeRoom} playerId={playerId} isHost={isHost} selectedTime={selectedTime} setSelectedTime={(time) => { setSelectedTime(time); send({ type: 'set_time', time }) }} onBack={leaveRoom} onCopy={copyRoomCode} copied={copied} onStart={startGame} />}
+      {screen === 'room' && activeRoom && <Room room={activeRoom} playerId={playerId} isHost={isHost} onSettings={editSettings} onBack={leaveRoom} onCopy={copyRoomCode} copied={copied} onStart={startGame} />}
       {screen === 'opening' && activeRoom && <Opening room={activeRoom} answer={answer} setAnswer={setAnswer} submitted={submitted} timeLeft={timeLeft} totalTime={totalTime} onSubmit={submitAnswer} onBack={leaveRoom} />}
       {screen === 'game' && activeRoom && <Game room={activeRoom} playerId={playerId} answer={answer} setAnswer={setAnswer} submitted={submitted} timeLeft={timeLeft} totalTime={totalTime} onSubmit={submitAnswer} onBack={leaveRoom} />}
       {screen === 'result' && activeRoom && <Result initialWords={activeRoom.initialWords} rounds={rounds} type={resultType} roomCode={activeRoom.id} time={activeRoom.time} isHost={isHost} restarting={restarting} onAgain={playAgain} onHome={leaveRoom} />}
       {showNameSetup && <NameSetupModal connected={connected} initialName={playerName} onSave={updateName} />}
       {showCreate && <CreateModal connected={connected} name={newRoomName} setName={setNewRoomName} mode={newRoomMode} setMode={setNewRoomMode} category={newRoomCategory} setCategory={setNewRoomCategory} maxRounds={maxRounds} setMaxRounds={setMaxRounds} time={selectedTime} setTime={setSelectedTime} onClose={() => setShowCreate(false)} onCreate={createRoom} />}
+      {showSettings && <CreateModal connected={connected} editing saving={settingsSaving} name={activeRoom.name} mode={newRoomMode} setMode={setNewRoomMode} category={newRoomCategory} setCategory={setNewRoomCategory} maxRounds={maxRounds} setMaxRounds={setMaxRounds} time={selectedTime} setTime={setSelectedTime} onClose={() => { if (!settingsSaving) setShowSettings(false) }} onCreate={saveSettings} />}
       {showJoin && <JoinModal code={roomCode} setCode={setRoomCode} onClose={() => setShowJoin(false)} onJoin={joinByCode} />}
     </main>
   )
@@ -340,7 +374,7 @@ function RoomCard({ room, onClick }) {
   return <button className="room-card" onClick={onClick} disabled={full}><span className="room-card-icon"><UsersRound size={17} /></span><span className="room-card-copy"><strong>{room.name}</strong><small>{room.id} · {room.host} · {category}</small></span><span className="room-card-meta"><span className={`status-dot ${full ? 'busy' : ''}`} />{full ? '游戏中' : `${room.players}/${room.max}`}</span><ChevronRight className="room-chevron" size={18} /></button>
 }
 
-function Room({ room, playerId, isHost, selectedTime, setSelectedTime, onBack, onCopy, copied, onStart }) {
+function Room({ room, playerId, isHost, onSettings, onBack, onCopy, copied, onStart }) {
   const players = room.playersDetail || []
   const hasOpponent = players.length >= 2
   const playerWordsMode = room.mode === 'player_words'
@@ -348,7 +382,7 @@ function Room({ room, playerId, isHost, selectedTime, setSelectedTime, onBack, o
     <Header eyebrow="房间" onBack={onBack} action={<span className="room-code-mini">{room.id}</span>} />
     <section className="room-intro"><span className="section-label">你正在进入</span><h1>{room.name}</h1><p>{hasOpponent ? `${players[0]?.name || '玩家'} 和 ${players[1]?.name || '玩家'} 已经到齐。` : '等另一个人进来，然后一起开始。'}</p></section>
     <section className="room-panel"><div className="room-panel-top"><div className="room-badge"><span className="pulse-dot" />公开房间</div><button className="copy-button" onClick={onCopy}>{copied ? <Check size={15} /> : <Copy size={15} />} {copied ? '已复制' : '复制房间号'}</button></div><div className="room-code-large">{room.id.split('').map((char, index) => <span key={`${char}-${index}`}>{char}</span>)}</div><div className="room-players"><div className="player-with-name"><div className="player avatar-purple">你</div><small>{players.find((player) => player.id === playerId)?.name || '你'}</small></div><div className="connection-line"><span /><span /><span /></div><div className="player-with-name"><div className={`player ${hasOpponent ? 'avatar-mint' : 'avatar-mint waiting-avatar'}`}>{hasOpponent ? '✓' : '?'}</div><small>{players.find((player) => player.id !== playerId)?.name || '等待中'}</small></div></div><p className="waiting-copy">{hasOpponent ? '另一位玩家已经加入' : '房间里还有一个位置'}<br /><small>{hasOpponent ? '准备好后就可以开始这一局。' : '把房间号发给朋友，或者等一个刚好路过的人。'}</small></p></section>
-    <section className="settings-panel"><div className="setting-title"><Clock3 size={17} /><div><strong>每轮思考时间</strong><small>{isHost ? '房主可以调整，开始后不能更改' : '由房主设置'}</small></div></div><div className="mode-note"><span>{playerWordsMode ? '双方出词' : '系统出词'}</span><small>{playerWordsMode ? '第一组词由你们各自填写' : `${CATEGORY_OPTIONS.find((option) => option.id === room.category)?.label || '综合'}题库`}</small></div><div className="time-options">{[30, 60, 90, 120].map((seconds) => <button key={seconds} disabled={!isHost || room.status !== 'waiting'} className={selectedTime === seconds ? 'selected' : ''} onClick={() => setSelectedTime(seconds)}>{seconds}<small>秒</small></button>)}</div></section>
+    <section className="settings-panel"><div className="room-settings-heading"><div className="setting-title"><Clock3 size={17} /><div><strong>本局玩法</strong><small>{isHost ? '开局前可随时调整' : '由房主设置，双方实时同步'}</small></div></div>{isHost && <button className="secondary-button settings-edit" disabled={room.status !== 'waiting'} onClick={onSettings}>修改玩法</button>}</div><dl className="room-settings-summary"><div><dt>模式</dt><dd>{playerWordsMode ? '双方出词' : '系统出词'}</dd></div><div><dt>题库</dt><dd>{playerWordsMode ? '玩家自定义' : CATEGORY_OPTIONS.find((option) => option.id === room.category)?.label || '综合'}</dd></div><div><dt>思考时间</dt><dd>{room.time} 秒</dd></div><div><dt>轮数上限</dt><dd>{room.maxRounds} 轮</dd></div></dl></section>
     <div className="bottom-action"><button className="primary-button full-button" disabled={!isHost || !hasOpponent || room.status !== 'waiting'} onClick={onStart}>{hasOpponent ? '开始一局' : '等待另一位玩家'} <ArrowUpRight size={18} /></button><span className="micro-copy"><Flame size={13} /> {isHost ? '你是房主' : `房主：${players.find((player) => player.id !== playerId)?.name || '等待中'}`} · 最多 {room.maxRounds} 轮</span></div>
   </div>
 }
@@ -396,12 +430,12 @@ function NameSetupModal({ connected, initialName, onSave }) {
   )
 }
 
-function CreateModal({ connected, name, setName, mode, setMode, category, setCategory, maxRounds, setMaxRounds, time, setTime, onClose, onCreate }) {
+function CreateModal({ connected, editing = false, saving = false, name, setName, mode, setMode, category, setCategory, maxRounds, setMaxRounds, time, setTime, onClose, onCreate }) {
   return (
     <div className="modal-backdrop" onClick={(event) => { if (event.target === event.currentTarget) onClose() }}>
       <form className="modal-card create-modal" role="dialog" aria-modal="true" aria-labelledby="create-title" onSubmit={(event) => { event.preventDefault(); onCreate() }}>
-        <div className="modal-heading"><h2 id="create-title">创建房间</h2><button type="button" className="icon-button" aria-label="关闭创建房间" onClick={onClose}><X size={18} /></button></div>
-        <label className="field-label">房间名称<input className="text-input" value={name} onChange={(event) => setName(event.target.value)} maxLength={18} /></label>
+        <div className="modal-heading"><h2 id="create-title">{editing ? '修改本局玩法' : '创建房间'}</h2><button type="button" className="icon-button" disabled={saving} aria-label="关闭设置" onClick={onClose}><X size={18} /></button></div>
+        {!editing && <label className="field-label">房间名称<input className="text-input" value={name} onChange={(event) => setName(event.target.value)} maxLength={18} /></label>}
         <fieldset className="choice-field"><legend>游戏模式</legend><div className="mode-options">
           <button type="button" aria-pressed={mode === 'system_words'} className={mode === 'system_words' ? 'selected' : ''} onClick={() => setMode('system_words')}><strong>系统出词</strong><small>从选定题库随机抽词</small></button>
           <button type="button" aria-pressed={mode === 'player_words'} className={mode === 'player_words' ? 'selected' : ''} onClick={() => setMode('player_words')}><strong>双方出词</strong><small>各写一个词作为起点</small></button>
@@ -409,7 +443,7 @@ function CreateModal({ connected, name, setName, mode, setMode, category, setCat
         {mode === 'system_words' ? <fieldset className="choice-field"><legend>选择题库</legend><div className="category-options">{CATEGORY_OPTIONS.map((option) => <button type="button" key={option.id} aria-pressed={category === option.id} className={category === option.id ? 'selected' : ''} onClick={() => setCategory(option.id)}><span>{option.label}</span>{category === option.id && <Check size={14} />}</button>)}</div><p className="form-hint">{CATEGORY_OPTIONS.find((option) => option.id === category)?.description}</p></fieldset> : <p className="form-hint">双方出词模式由玩家提供起始词，不使用系统题库。</p>}
         <fieldset className="choice-field"><legend>每轮思考时间</legend><div className="modal-time-options">{TIME_OPTIONS.map((seconds) => <button type="button" key={seconds} aria-pressed={time === seconds} className={time === seconds ? 'selected' : ''} onClick={() => setTime(seconds)}>{seconds} 秒</button>)}</div></fieldset>
         <label className="field-label">单局轮数上限<input className="text-input" type="number" inputMode="numeric" min="2" max="30" step="1" required value={maxRounds} onChange={(event) => setMaxRounds(event.target.value)} /><span className="form-hint">默认 10 轮，最多 30 轮，包含第 1 轮起始词。</span></label>
-        <button type="submit" className="primary-button full-button" disabled={!connected}>{connected ? '创建房间' : '正在连接…'} <ArrowUpRight size={18} /></button>
+        <button type="submit" className="primary-button full-button" disabled={!connected || saving}>{!connected ? '正在连接…' : saving ? '正在保存…' : editing ? '保存玩法' : '创建房间'} <ArrowUpRight size={18} /></button>
       </form>
     </div>
   )

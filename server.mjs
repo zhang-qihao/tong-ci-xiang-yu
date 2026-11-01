@@ -275,6 +275,21 @@ function handleMessage(client, payload) {
     case 'leave_room':
       leaveRoom(client)
       break
+    case 'update_settings': {
+      if (!currentRoom || currentRoom.hostId !== player.id) return sendError(client, '只有房主可以修改玩法')
+      if (currentRoom.status !== 'waiting') return sendError(client, '游戏开始后不能修改玩法')
+      const { mode, category, time, maxRounds } = payload
+      if (!['system_words', 'player_words'].includes(mode) || !Object.prototype.hasOwnProperty.call(QUESTION_BANKS, category)) {
+        return sendError(client, '请选择有效的玩法和题库')
+      }
+      if (![30, 60, 90, 120].includes(time) || !Number.isInteger(maxRounds) || maxRounds < 2 || maxRounds > MAX_ROUNDS) {
+        return sendError(client, '请设置有效时间和 2 到 30 轮的上限')
+      }
+      Object.assign(currentRoom, { mode, category, time, maxRounds })
+      broadcastRoom(currentRoom, { type: 'room_updated', room: publicRoom(currentRoom) })
+      broadcastLobby()
+      break
+    }
     case 'set_time':
       if (!currentRoom || currentRoom.hostId !== player.id || currentRoom.status !== 'waiting') return
       if ([30, 60, 90, 120].includes(payload.time)) currentRoom.time = payload.time
