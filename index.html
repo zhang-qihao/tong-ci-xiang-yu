@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#f7f8fc" />
+    <meta name="description" content="同词相遇：让两条脑回路，走到同一个词。" />
+    <title>同词相遇 · 让两条脑回路相遇</title>
+    <style>
+      .boot-screen { min-height: 100svh; display: grid; place-items: center; align-content: center; gap: 12px; padding: 24px; color: #26243d; background: #f7f8fc; font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; }
+      .boot-screen strong { font-size: 20px; }
+      .boot-screen small { color: #8f8ea1; font-size: 13px; }
+      .boot-error { max-width: 340px; }
+      .boot-error button { margin-top: 8px; padding: 10px 16px; color: #fff; border: 0; border-radius: 10px; background: #6d58c9; font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <div id="root"><div class="boot-screen"><strong>同词相遇</strong><small>正在连接房间大厅…</small></div></div>
+    <script>
+      window.addEventListener('error', function (event) {
+        var root = document.getElementById('root')
+        if (!root || root.dataset.ready === 'true') return
+        root.innerHTML = '<div class="boot-screen boot-error"><strong>页面暂时无法打开</strong><small>' + (event.message || '请刷新页面重试') + '</small><button onclick="location.reload()">重新加载</button></div>'
+      })
+      window.addEventListener('unhandledrejection', function (event) {
+        var root = document.getElementById('root')
+        if (!root || root.dataset.ready === 'true') return
+        root.innerHTML = '<div class="boot-screen boot-error"><strong>连接出现问题</strong><small>请刷新页面重试</small><button onclick="location.reload()">重新加载</button></div>'
+      })
+    </script>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
