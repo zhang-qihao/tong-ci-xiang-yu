@@ -185,6 +185,23 @@ function App() {
   }, [playerId])
 
   useEffect(() => {
+    const viewport = window.visualViewport
+    const updateViewport = () => {
+      document.documentElement.style.setProperty('--visible-height', `${viewport?.height || window.innerHeight}px`)
+      document.documentElement.style.setProperty('--visible-top', `${viewport?.offsetTop || 0}px`)
+    }
+    updateViewport()
+    viewport?.addEventListener('resize', updateViewport)
+    viewport?.addEventListener('scroll', updateViewport)
+    window.addEventListener('resize', updateViewport)
+    return () => {
+      viewport?.removeEventListener('resize', updateViewport)
+      viewport?.removeEventListener('scroll', updateViewport)
+      window.removeEventListener('resize', updateViewport)
+    }
+  }, [])
+
+  useEffect(() => {
     if (!['game', 'opening'].includes(screen) || !activeRoom?.deadlineAt) return undefined
     const update = () => setTimeLeft(Math.max(0, Math.ceil((activeRoom.deadlineAt - Date.now()) / 1000)))
     update()
@@ -224,7 +241,10 @@ function App() {
       setNotice('请先填写昵称')
       return false
     }
-    if (name === playerName) return true
+    if (name === playerName) {
+      setShowNameSetup(false)
+      return true
+    }
     if (send({ type: 'update_name', name })) {
       setPlayerName(name)
       playerNameRef.current = name
@@ -307,12 +327,11 @@ function Lobby({ connected, playerName, onNameChange, query, setQuery, rooms, on
   const [draftName, setDraftName] = useState(playerName)
   function saveName(event) {
     event.preventDefault()
-    onNameChange(draftName)
-    setEditingName(false)
+    if (onNameChange(draftName)) setEditingName(false)
   }
   return <div className="page lobby-page">
     <Header action={<div className="lobby-actions"><span className={`connection-state ${connected ? 'online' : ''}`}><Wifi size={13} /> {connected ? '已连接' : '连接中'}</span></div>} />
-    <div className="identity-bar">{editingName ? <form onSubmit={saveName} className="name-form"><input autoFocus value={draftName} onChange={(event) => setDraftName(event.target.value)} maxLength={12} /><button type="submit">保存</button></form> : <><span>你是 <strong>{playerName}</strong></span><button onClick={() => { setDraftName(playerName); setEditingName(true) }}>修改昵称</button></>}</div>
+    <div className="identity-bar">{editingName ? <form onSubmit={saveName} className="name-form"><input value={draftName} onChange={(event) => setDraftName(event.target.value)} maxLength={12} /><button type="submit">保存</button></form> : <><span>你是 <strong>{playerName}</strong></span><button onClick={() => { setDraftName(playerName); setEditingName(true) }}>修改昵称</button></>}</div>
     <section className="lobby-hero"><div className="hero-kicker"><Sparkles size={15} /> 两条脑回路，走到同一个词</div><h1>同词<br /><em>相遇</em></h1><p>和另一个人，从两个词出发。<br />看看你们会在哪一轮想到一起。</p><div className="lobby-cta-row"><button className="primary-button" onClick={onCreate}>创建房间 <ArrowUpRight size={17} /></button><button className="secondary-button" onClick={onJoin}><Hash size={16} /> 加入房间</button></div></section>
     <section className="rooms-section"><div className="section-heading"><div><span className="section-label">正在发生</span><h2>公开房间</h2></div><span className="room-count">{rooms.length} 间可加入</span></div><div className="search-field"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索房间名或房间号" /><kbd>/</kbd></div><div className="room-list-scroll"><div className="room-list">{rooms.map((room) => <RoomCard key={room.id} room={room} onClick={() => onOpen(room)} />)}{!rooms.length && <div className="empty-state"><span>还没有公开房间</span><small>创建一个，等另一个人进来。</small><button onClick={onCreate}>创建第一个房间</button></div>}</div></div></section>
   </div>
@@ -339,13 +358,13 @@ function Room({ room, playerId, isHost, selectedTime, setSelectedTime, onBack, o
 
 function Opening({ room, answer, setAnswer, submitted, timeLeft, totalTime, onSubmit, onBack }) {
   const progress = Math.max(0, Math.min(100, (timeLeft / totalTime) * 100))
-  return <div className="page game-page"><Header eyebrow="各自出一个词" onBack={onBack} action={<span className={`timer ${timeLeft <= 10 ? 'urgent' : ''}`}><Clock3 size={15} /> {timeLeft}s</span>} /><div className="timer-track"><span style={{ width: `${progress}%` }} /></div><section className="game-content"><div className="game-note">第一组词，由你们自己写下</div><div className="opening-mark"><span>你们的两个词</span><strong>?</strong></div><p className="game-question">先写下一个你想带进这局的词</p><form className="answer-form" onSubmit={onSubmit}><input autoFocus disabled={submitted} value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder={submitted ? '已经写下你的词' : '写下一个词'} maxLength={12} /><div className="input-footer"><span>{answer.length}/12</span><button className="primary-button submit-button" disabled={!answer.trim() || submitted}>{submitted ? '等对方…' : '提交起始词'} {!submitted && <ArrowUpRight size={17} />}</button></div></form><div className="privacy-note"><span className="lock-shape" /> 对方现在看不到你的词</div></section><div className="game-bottom"><span>双方提交后才会揭晓</span><span>最长 {totalTime} 秒</span></div></div>
+  return <div className="page game-page"><Header eyebrow="各自出一个词" onBack={onBack} action={<span className={`timer ${timeLeft <= 10 ? 'urgent' : ''}`}><Clock3 size={15} /> {timeLeft}s</span>} /><div className="timer-track"><span style={{ width: `${progress}%` }} /></div><section className="game-content"><div className="game-note">第一组词，由你们自己写下</div><div className="opening-mark"><span>你们的两个词</span><strong>?</strong></div><p className="game-question">先写下一个你想带进这局的词</p><form className="answer-form" onSubmit={onSubmit}><input disabled={submitted} value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder={submitted ? '已经写下你的词' : '写下一个词'} maxLength={12} /><div className="input-footer"><span>{answer.length}/12</span><button className="primary-button submit-button" disabled={!answer.trim() || submitted}>{submitted ? '等对方…' : '提交起始词'} {!submitted && <ArrowUpRight size={17} />}</button></div></form><div className="privacy-note"><span className="lock-shape" /> 对方现在看不到你的词</div></section><div className="game-bottom"><span>双方提交后才会揭晓</span><span>最长 {totalTime} 秒</span></div></div>
 }
 
 function Game({ room, answer, setAnswer, submitted, timeLeft, totalTime, onSubmit, onBack }) {
   const progress = Math.max(0, Math.min(100, (timeLeft / totalTime) * 100))
   const words = room.currentWords || ['', '']
-  return <div className="page game-page"><Header eyebrow={`第 ${room.round} 轮`} onBack={onBack} action={<span className={`timer ${timeLeft <= 10 ? 'urgent' : ''}`}><Clock3 size={15} /> {timeLeft}s</span>} /><div className="timer-track"><span style={{ width: `${progress}%` }} /></div><section className="game-content"><div className="game-note">你们现在看到的是同一组词</div><div className="prompt-pair"><div className="prompt-card purple"><span>词一</span><strong>{words[0]}</strong></div><div className="prompt-symbol">×</div><div className="prompt-card mint"><span>词二</span><strong>{words[1]}</strong></div></div><p className="game-question">看到这两个词，你想到什么？</p><form className="answer-form" onSubmit={onSubmit}><input autoFocus disabled={submitted} value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder={submitted ? '已经写下你的答案' : '写下一个词'} maxLength={12} /><div className="input-footer"><span>{answer.length}/12</span><button className="primary-button submit-button" disabled={!answer.trim() || submitted}>{submitted ? '等对方…' : '提交答案'} {!submitted && <ArrowUpRight size={17} />}</button></div></form><div className="privacy-note"><span className="lock-shape" /> 对方现在看不到你的答案</div></section><div className="game-bottom"><span>不着急，认真想一想</span><span>最长 {totalTime} 秒</span></div></div>
+  return <div className="page game-page"><Header eyebrow={`第 ${room.round} 轮`} onBack={onBack} action={<span className={`timer ${timeLeft <= 10 ? 'urgent' : ''}`}><Clock3 size={15} /> {timeLeft}s</span>} /><div className="timer-track"><span style={{ width: `${progress}%` }} /></div><section className="game-content"><div className="game-note">你们现在看到的是同一组词</div><div className="prompt-pair"><div className="prompt-card purple"><span>词一</span><strong>{words[0]}</strong></div><div className="prompt-symbol">×</div><div className="prompt-card mint"><span>词二</span><strong>{words[1]}</strong></div></div><p className="game-question">看到这两个词，你想到什么？</p><form className="answer-form" onSubmit={onSubmit}><input disabled={submitted} value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder={submitted ? '已经写下你的答案' : '写下一个词'} maxLength={12} /><div className="input-footer"><span>{answer.length}/12</span><button className="primary-button submit-button" disabled={!answer.trim() || submitted}>{submitted ? '等对方…' : '提交答案'} {!submitted && <ArrowUpRight size={17} />}</button></div></form><div className="privacy-note"><span className="lock-shape" /> 对方现在看不到你的答案</div></section><div className="game-bottom"><span>不着急，认真想一想</span><span>最长 {totalTime} 秒</span></div></div>
 }
 
 function Result({ initialWords, rounds, type, roomCode, time, isHost, restarting, onAgain, onHome }) {
@@ -367,15 +386,39 @@ function NameSetupModal({ connected, initialName, onSave }) {
     event.preventDefault()
     onSave(name)
   }
-  return <div className="modal-backdrop name-setup-backdrop"><form className="modal-card name-setup-card" onSubmit={submit}><span className="section-label">先认识一下</span><h2>你想用什么名字？</h2><p>房间里的另一位玩家会看到它。</p><input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={12} placeholder="写下你的昵称" /><button className="primary-button full-button" disabled={!connected || !name.trim()}>{connected ? '进入大厅' : '正在连接…'}</button></form></div>
+  return (
+    <div className="modal-backdrop name-setup-backdrop">
+      <form className="modal-card name-setup-card" role="dialog" aria-modal="true" aria-labelledby="name-title" onSubmit={submit}>
+        <div className="modal-heading"><h2 id="name-title">先认识一下</h2></div>
+        <p className="form-hint">写下你的名字，让对方知道在和谁玩。</p>
+        <label className="field-label" htmlFor="player-name">玩家昵称</label>
+        <input id="player-name" className="text-input" value={name} onChange={(event) => setName(event.target.value)} maxLength={12} placeholder="输入昵称，最多 12 个字" autoComplete="nickname" enterKeyHint="done" required />
+        <button type="submit" className="primary-button full-button" disabled={!connected || !name.trim()}>{connected ? '进入大厅' : '正在连接…'}</button>
+      </form>
+    </div>
+  )
 }
 
 function CreateModal({ connected, name, setName, mode, setMode, category, setCategory, time, setTime, onClose, onCreate }) {
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal-card" onMouseDown={(event) => event.stopPropagation()}><div className="modal-heading"><div><span className="section-label">新房间</span><h2>发起一次相遇</h2></div><button className="icon-button" onClick={onClose}><X size={18} /></button></div><label className="field-label">房间名称<input value={name} onChange={(event) => setName(event.target.value)} maxLength={18} /></label><div className="field-label">游戏模式<div className="mode-options"><button type="button" className={mode === 'system_words' ? 'selected' : ''} onClick={() => setMode('system_words')}><strong>系统出词</strong><small>从选定题库抽取两个不同的词</small></button><button type="button" className={mode === 'player_words' ? 'selected' : ''} onClick={() => setMode('player_words')}><strong>双方出词</strong><small>你们各写一个词作为起点</small></button></div></div><div className="field-label">选择题库<div className="category-options">{CATEGORY_OPTIONS.map((option) => <button type="button" key={option.id} className={category === option.id ? 'selected' : ''} onClick={() => setCategory(option.id)}><strong>{option.label}</strong><small>{option.description}</small></button>)}</div></div><div className="field-label">每轮思考时间<div className="modal-time-options">{TIME_OPTIONS.map((seconds) => <button type="button" key={seconds} className={time === seconds ? 'selected' : ''} onClick={() => setTime(seconds)}>{seconds} 秒</button>)}</div></div><button className="primary-button full-button" disabled={!connected} onClick={onCreate}>{connected ? '创建房间' : '正在连接…'} <ArrowUpRight size={18} /></button></div></div>
+  return (
+    <div className="modal-backdrop" onClick={(event) => { if (event.target === event.currentTarget) onClose() }}>
+      <form className="modal-card create-modal" role="dialog" aria-modal="true" aria-labelledby="create-title" onSubmit={(event) => { event.preventDefault(); onCreate() }}>
+        <div className="modal-heading"><h2 id="create-title">创建房间</h2><button type="button" className="icon-button" aria-label="关闭创建房间" onClick={onClose}><X size={18} /></button></div>
+        <label className="field-label">房间名称<input className="text-input" value={name} onChange={(event) => setName(event.target.value)} maxLength={18} /></label>
+        <fieldset className="choice-field"><legend>游戏模式</legend><div className="mode-options">
+          <button type="button" aria-pressed={mode === 'system_words'} className={mode === 'system_words' ? 'selected' : ''} onClick={() => setMode('system_words')}><strong>系统出词</strong><small>从选定题库随机抽词</small></button>
+          <button type="button" aria-pressed={mode === 'player_words'} className={mode === 'player_words' ? 'selected' : ''} onClick={() => setMode('player_words')}><strong>双方出词</strong><small>各写一个词作为起点</small></button>
+        </div></fieldset>
+        {mode === 'system_words' ? <fieldset className="choice-field"><legend>选择题库</legend><div className="category-options">{CATEGORY_OPTIONS.map((option) => <button type="button" key={option.id} aria-pressed={category === option.id} className={category === option.id ? 'selected' : ''} onClick={() => setCategory(option.id)}><span>{option.label}</span>{category === option.id && <Check size={14} />}</button>)}</div><p className="form-hint">{CATEGORY_OPTIONS.find((option) => option.id === category)?.description}</p></fieldset> : <p className="form-hint">双方出词模式由玩家提供起始词，不使用系统题库。</p>}
+        <fieldset className="choice-field"><legend>每轮思考时间</legend><div className="modal-time-options">{TIME_OPTIONS.map((seconds) => <button type="button" key={seconds} aria-pressed={time === seconds} className={time === seconds ? 'selected' : ''} onClick={() => setTime(seconds)}>{seconds} 秒</button>)}</div></fieldset>
+        <button type="submit" className="primary-button full-button" disabled={!connected}>{connected ? '创建房间' : '正在连接…'} <ArrowUpRight size={18} /></button>
+      </form>
+    </div>
+  )
 }
 
 function JoinModal({ code, setCode, onClose, onJoin }) {
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal-card join-modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-heading"><div><span className="section-label">加入房间</span><h2>输入房间号</h2></div><button className="icon-button" onClick={onClose}><X size={18} /></button></div><input autoFocus className="code-input" value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="例如 Y9WYMV" maxLength={8} /><button className="primary-button full-button" disabled={code.length < 4} onClick={onJoin}>进入房间 <DoorOpen size={18} /></button></div></div>
+  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal-card join-modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-heading"><div><span className="section-label">加入房间</span><h2>输入房间号</h2></div><button className="icon-button" onClick={onClose}><X size={18} /></button></div><input className="code-input" value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="例如 Y9WYMV" maxLength={8} /><button className="primary-button full-button" disabled={code.length < 4} onClick={onJoin}>进入房间 <DoorOpen size={18} /></button></div></div>
 }
 
 class AppErrorBoundary extends React.Component {
