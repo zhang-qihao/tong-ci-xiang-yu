@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 RUN_DIR="$ROOT/.run"
 LOCK_DIR="$RUN_DIR/app.lock"
 REMOTE_URL="https://github.com/zhang-qihao/tong-ci-xiang-yu.git"
