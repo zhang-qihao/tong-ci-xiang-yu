@@ -6,3 +6,5 @@ dist/
 .env
 .env.*
 !.env.example
+
+data/wordbanks/seeds/jieba.dict.txt

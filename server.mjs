@@ -35,7 +35,7 @@ function randomCode() {
 
 function randomWords(category = 'all') {
   const bank = QUESTION_BANKS[category] || QUESTION_BANKS.all
-  const pool = [...new Set(bank.flat())]
+  const pool = [...new Set(bank)]
   const first = pool[Math.floor(Math.random() * pool.length)]
   let second = pool[Math.floor(Math.random() * pool.length)]
   while (normalizeWord(first) === normalizeWord(second)) second = pool[Math.floor(Math.random() * pool.length)]
